@@ -71,7 +71,7 @@ class rag:
 
         app = workflow.compile()
         #display(Image(app.get_graph().draw_mermaid_png()))
-        return workflow
+        return app
 
 
 
@@ -126,7 +126,7 @@ class rag:
 
     def generate(self, state: State):
         docs_content = "\n\n".join(doc.page_content for doc in state["context"])
-        question = state["questions"]
+        question = state["question"]
         message = f'''
         {question}
         {docs_content}

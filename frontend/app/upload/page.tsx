@@ -1,10 +1,14 @@
+"use client"
 import { createClient } from '@supabase/supabase-js'
 import { UploadCloud } from "lucide-react";
 import axios from 'axios'
-import { ChangeEvent, useState } from 'React';
+import { supabase } from '@/lib/src/supabase';
+import { ChangeEvent, useState } from 'react';
 export default function UploadPage() {
-  const supabase = createClient('your_project_url', 'your_supabase_api_key')
   
+  interface FileWithPath extends File {
+  path: string;
+}
   
   type upload_status = 'idle' | 'uploading' | 'success' | 'error';
   const [file, setFile] = useState<File | null>(null);
@@ -23,27 +27,16 @@ export default function UploadPage() {
     setStatus('uploading');
     setUploadProgress(0);
 
-    const formData = new FormData();
-    formData.append('file', file);
-
+    const filePath = `${Date.now()}_${file.name}`;
     try {
-      await axios.post('https://httpbin.org/post', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          const progress = progressEvent.total
-            ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
-            : 0;
-          setUploadProgress(progress);
-        },
-      });
-
+    const {data,error}  = await supabase.storage.from('user-documents').upload(filePath, file)
+      if (error) throw error;
       setStatus('success');
       setUploadProgress(100);
-    } catch {
-      setStatus('error');
+    } catch (err){
+      console.error("Supabase upload error:", err);
       setUploadProgress(0);
+      setStatus('error');
     }
   }
 
@@ -84,10 +77,42 @@ export default function UploadPage() {
           <p className="mt-2 text-muted">
             or click below to browse files
           </p>
+          <div className="space-y-2">
+      <input className="mt-8 rounded-xl bg-primary px-6 py-3 text-white" type="file" onChange={handleFileChange} />
 
-          <button onClick={handleFileUpload} className="mt-8 rounded-xl bg-primary px-6 py-3 text-white">
-            Select PDF
-          </button>
+      {file && (
+        <div className="mb-4 text-sm">
+          <p>File name: {file.name}</p>
+          <p>Size: {(file.size / 1024).toFixed(2)} KB</p>
+          <p>Type: {file.type}</p>
+        </div>
+      )}
+
+      {status === 'uploading' && (
+        <div className="space-y-2">
+          <div className="h-2.5 w-full rounded-full bg-gray-200">
+            <div
+              className="h-2.5 rounded-full bg-blue-600 transition-all duration-300"
+              style={{ width: `${uploadProgress}%` }}
+            ></div>
+          </div>
+          <p className="text-sm text-gray-600">{uploadProgress}% uploaded</p>
+        </div>
+      )}
+
+      {file && status !== 'uploading' && (
+        <button onClick={handleFileUpload} className="mt-8 rounded-xl bg-primary px-6 py-3 text-white">Upload</button>
+      )}
+
+      {status === 'success' && (
+        <p className="text-sm text-green-600">File uploaded successfully!</p>
+      )}
+
+      {status === 'error' && (
+        <p className="text-sm text-red-600">Upload failed. Please try again.</p>
+      )}
+    </div>
+        
 
         </div>
 

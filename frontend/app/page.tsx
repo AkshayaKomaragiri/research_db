@@ -1,5 +1,4 @@
-import Sidebar from "../app/components/Sidebar";
-import Topbar from "../app/components/Topbar";
+
 import ChatWindow from "../app/components/ChatWindow"
 
 export default function Home() {

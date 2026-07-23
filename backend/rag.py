@@ -56,18 +56,11 @@ class rag:
         workflow = StateGraph(State)
         workflow.add_node("retrieve", self.retrieve_context)
         workflow.add_node("generate", self.generate)
-        workflow.add_node("user_speak", self.user_speak)
-        workflow.add_node("continue_conversation", self.continue_conversation)
+     
 
-        workflow.add_edge(START, "user_speak")
-        workflow.add_edge("user_speak", "continue_conversation")
-        workflow.add_conditional_edges("continue_conversation", lambda x: x["continue_chat"],
-        {
-            True: "retrieve",
-            False: END
-        })
+        workflow.add_edge(START, "retrieve")
         workflow.add_edge("retrieve", "generate")
-        workflow.add_edge("generate", "user_speak")
+        workflow.add_edge("generate", END)
 
         app = workflow.compile()
         #display(Image(app.get_graph().draw_mermaid_png()))
@@ -97,22 +90,6 @@ class rag:
         document_ids = self.vector_store.add_documents(documents=all_splits)
 
         print(document_ids[:3])
-
-
-    def user_speak(self, state: State) -> State:
-        user_input = input("You: ")
-        state["question"] = user_input
-        state["messages"].append(HumanMessage(content=user_input))
-        return state
-    
-
-    def continue_conversation(self, state: State) -> State:
-        if state["messages"][-1].content == "exit":
-            state["continue_chat"]=False
-            print("Goodbye!")
-        else:
-            state["continue_chat"] = True
-        return state
     
     def retrieve_context(self, state: State) -> State:
         """Retrieve information to help answer query"""
@@ -126,13 +103,6 @@ class rag:
 
     def generate(self, state: State):
         docs_content = "\n\n".join(doc.page_content for doc in state["context"])
-        question = state["question"]
-        message = f'''
-        {question}
-        {docs_content}
-        '''
-
         response = self.model.invoke(state["messages"])
         state["messages"].append(response)
-        print (state["messages"][-1].content)
         return {"messages": [response]}

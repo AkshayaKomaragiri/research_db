@@ -5,7 +5,7 @@ import asyncio
 from .rag import rag
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
-
+from langchain_core.messages import HumanMessage
 
 rag = rag()
 
@@ -42,8 +42,8 @@ async def root():
 @app.post("/chat")
 async def answer_question(request: Request):
     initial_state = {
-        "question": str,
-        "messages": [],
+        "question": request.question,
+        "messages": [HumanMessage(content=request.question)],
         "context":[],
         "continue_chat": True
    }

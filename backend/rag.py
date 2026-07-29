@@ -14,6 +14,8 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.documents import Document 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages 
+from supabase import create_client,Client
+from langchain_community.vectorstores import SupabaseVectorStore
 #from IPython.display import Image, display
 
 load_dotenv()
@@ -43,11 +45,15 @@ class rag:
         ) 
         #vector database
         #the database is persistent
+        supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+        supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        supabase_client: Client = create_client(supabase_url, supabase_key)
 
-        self.vector_store = Chroma(
-            collection_name="example_collection",
-            embedding_function=embeddings,
-            persist_directory="./chroma_langchain_db",  
+        self.vector_store = SupabaseVectorStore(
+            client=supabase_client,
+            embedding=embeddings,
+            table_name="documents",
+            query_name="match_documents",  
         ) 
         self.graph = self.pipline()
         

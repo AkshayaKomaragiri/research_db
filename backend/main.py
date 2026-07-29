@@ -6,6 +6,8 @@ from .rag import rag
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
+import os
+from supabase import create_client, Client
 
 rag = rag()
 
@@ -13,12 +15,12 @@ class Request(BaseModel):
     question: str
 class Response(BaseModel):
     answer: str
-
+supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+supabase: Client = create_client(supabase_url, supabase_key)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     rag.pipline()
-    if rag.vector_store._collection.count() == 0:
-        await rag.process_pdf("https://research.chalmers.se/publication/527311/file/527311_Fulltext.pdf")
 
     yield
 app = FastAPI(lifespan=lifespan)
@@ -38,6 +40,23 @@ app.add_middleware(
 async def root():
     return {"message": "Hello World"}
 
+@app.post("/upload")
+async def upload_file( file_path:str):
+    try:
+        with open(file_path, "rb") as f:
+            file_bytes= f.read()
+            response = (
+                supabase.storage.from_("user-documents").upload(
+                    path=file_path,
+                    file=file_bytes,
+                    file_options={"cache-control": "3600", "upsert": "false"},
+                )
+            )
+            return {"message": "File uploaded successfully", "response": response}
+        rag.process_pdf(file_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 @app.post("/chat")
 async def answer_question(request: Request):

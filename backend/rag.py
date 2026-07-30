@@ -93,7 +93,7 @@ class rag:
         print(f"Split pdf into {len(all_splits)} sub-documents.")
 
         #storing the vectors
-        document_ids = self.vector_store.add_documents(documents=all_splits)
+        document_ids = await self.vector_store.aadd_documents(documents=all_splits)
 
         print(document_ids[:3])
     

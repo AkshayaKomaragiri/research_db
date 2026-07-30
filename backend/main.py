@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 import asyncio
@@ -13,6 +13,9 @@ rag = rag()
 
 class Request(BaseModel):
     question: str
+
+class UploadRequest(BaseModel):
+    file_path: str
 class Response(BaseModel):
     answer: str
 supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -41,19 +44,20 @@ async def root():
     return {"message": "Hello World"}
 
 @app.post("/upload")
-async def upload_file( file_path:str):
+async def upload_file( request: UploadRequest):
     try:
-        with open(file_path, "rb") as f:
+        with open(request.file_path, "rb") as f:
             file_bytes= f.read()
             response = (
                 supabase.storage.from_("user-documents").upload(
-                    path=file_path,
+                    path=request.file_path,
                     file=file_bytes,
                     file_options={"cache-control": "3600", "upsert": "false"},
                 )
             )
+            await rag.process_pdf(request.file_path)
             return {"message": "File uploaded successfully", "response": response}
-        rag.process_pdf(file_path)
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     

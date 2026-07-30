@@ -34,14 +34,16 @@ export default function UploadPage() {
     setMessage(null);
 
     const filePath = `${user.id}/${Date.now()}_${file.name}`;
-
+    const request = {
+      file_path: filePath
+    }
     try {
-      const { error } = await supabase.storage
-        .from('user-documents')
-        .upload(filePath, file, { cacheControl: '3600', upsert: false });
-
-      if (error) throw error;
-
+      const result = fetch("http://127.0.0.1:8000/upload", {
+        method:"POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(request)
+      })
+      
       setStatus('success');
       setUploadProgress(100);
       setMessage('File uploaded successfully. Redirecting to My Papers...');

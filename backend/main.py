@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 import asyncio
@@ -8,14 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
 import os
 from supabase import create_client, Client
+import tempfile
 
 rag = rag()
 
 class Request(BaseModel):
     question: str
-
-class UploadRequest(BaseModel):
-    file_path: str
 class Response(BaseModel):
     answer: str
 supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -44,19 +42,25 @@ async def root():
     return {"message": "Hello World"}
 
 @app.post("/upload")
-async def upload_file( request: UploadRequest):
+async def upload_file( file: UploadFile = File(...), user_id: str = Form(...)):
     try:
-        with open(request.file_path, "rb") as f:
-            file_bytes= f.read()
-            response = (
-                supabase.storage.from_("user-documents").upload(
-                    path=request.file_path,
-                    file=file_bytes,
-                    file_options={"cache-control": "3600", "upsert": "false"},
-                )
+        file_bytes= await file.read()
+        supabase_path = f"{user_id}/{file.filename}"
+        response = supabase.storage.from_("user-documents").upload(
+                path=supabase_path,
+                file=file_bytes,
+                file_options={"cache-control": "3600", "upsert": "false"},
             )
-            await rag.process_pdf(request.file_path)
-            return {"message": "File uploaded successfully", "response": response}
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        try:  
+            await rag.process_pdf(tmp_path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        return {"message": "File uploaded successfully", "response": response}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

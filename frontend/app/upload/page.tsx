@@ -32,16 +32,17 @@ export default function UploadPage() {
     setStatus('uploading');
     setUploadProgress(0);
     setMessage(null);
-
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append('user_id', user.id);
     const filePath = `${user.id}/${Date.now()}_${file.name}`;
     const request = {
       file_path: filePath
     }
     try {
-      const result = fetch("http://127.0.0.1:8000/upload", {
+      const result = await fetch("http://127.0.0.1:8000/upload", {
         method:"POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(request)
+        body: formData
       })
       
       setStatus('success');

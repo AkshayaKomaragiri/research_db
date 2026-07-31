@@ -9,11 +9,16 @@ from langchain_core.messages import HumanMessage
 import os
 from supabase import create_client, Client
 import tempfile
+from typing import Optional
+from .collections_papers import store_paper_in_collection
 
 rag = rag()
 
 class Request(BaseModel):
     question: str
+    collection_id: Optional[str] = None
+    user_id: Optional[str] = None
+
 class Response(BaseModel):
     answer: str
 supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -42,40 +47,65 @@ async def root():
     return {"message": "Hello World"}
 
 @app.post("/upload")
-async def upload_file( file: UploadFile = File(...), user_id: str = Form(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+    collection_id: Optional[str] = Form(default=None),
+):
     try:
-        file_bytes= await file.read()
+        file_bytes = await file.read()
         supabase_path = f"{user_id}/{file.filename}"
         response = supabase.storage.from_("user-documents").upload(
-                path=supabase_path,
-                file=file_bytes,
-                file_options={"cache-control": "3600", "upsert": "false"},
+            path=supabase_path,
+            file=file_bytes,
+            file_options={"cache-control": "3600", "upsert": "false"},
+        )
+
+        if collection_id:
+            store_paper_in_collection(
+                supabase,
+                user_id=user_id,
+                collection_id=collection_id,
+                paper_name=file.filename,
+                paper_path=supabase_path,
             )
-        
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
-        try:  
+        try:
             await rag.process_pdf(tmp_path)
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
         return {"message": "File uploaded successfully", "response": response}
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
 
 @app.post("/chat")
 async def answer_question(request: Request):
+    context_parts = []
+    if request.collection_id:
+        context_parts.append(f"collection_id: {request.collection_id}")
+    if request.user_id:
+        context_parts.append(f"user_id: {request.user_id}")
+
+    question_text = request.question
+    if context_parts:
+        question_text = f"{request.question}\n\nContext:\n" + "\n".join(context_parts)
+
     initial_state = {
-        "question": request.question,
-        "messages": [HumanMessage(content=request.question)],
-        "context":[],
-        "continue_chat": True
-   }
+        "question": question_text,
+        "messages": [HumanMessage(content=question_text)],
+        "context": [],
+        "continue_chat": True,
+        "collection_id": request.collection_id,
+        "user_id": request.user_id,
+    }
     graph = rag.pipline()
-    
+
     async def event_generator():
         async for event in graph.astream_events(initial_state, version="v2"):
             kind = event["event"]
@@ -83,5 +113,5 @@ async def answer_question(request: Request):
                 content = event["data"]["chunk"].content
                 if content:
                     yield content
-                    
+
     return StreamingResponse(event_generator(), media_type="text/plain")

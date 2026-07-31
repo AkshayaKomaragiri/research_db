@@ -9,13 +9,15 @@ from .load import load_pdf
 from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain_core.tools import InjectedToolArg
-from typing import Annotated, TypedDict, List
+from typing import Annotated, TypedDict, List, Optional
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.documents import Document 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages 
 from supabase import create_client,Client
 from langchain_community.vectorstores import SupabaseVectorStore
+from langchain_core.messages import SystemMessage
+
 #from IPython.display import Image, display
 
 load_dotenv()
@@ -24,6 +26,8 @@ class State(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     context: List[Document]
     continue_chat: bool
+    collection_id: Optional[str]
+    user_id: Optional[str]
 # using the Qwen ai model from the HuggingFace platform
 # temperature is 0.7, which is the best for multi-purpose tasks. Temperature is amount of randomness and creativity introduced into the responses
 # max number of tokens that the model can use in a single response
@@ -75,7 +79,7 @@ class rag:
 
 
 
-    async def process_pdf(self, url : str):
+    async def process_pdf(self, url : str, user_id: str, collection_id: Optional[str] = None, paper_path: Optional[str] = None):
         docs = load_pdf(url)
         print(len(docs))
         print(docs[0].page_content[:300] if docs else "EMPTY")
@@ -89,7 +93,13 @@ class rag:
         )
         #split document
         all_splits = text_splitter.split_documents(docs)
-
+        for chunk in all_splits:
+            chunk.metadata = chunk.metadata or {}
+            chunk.metadata["user_id"] = user_id
+            if collection_id:
+                chunk.metadata["collection_id"] = collection_id
+            if paper_path:
+                chunk.metadata["paper_path"] = paper_path
         print(f"Split pdf into {len(all_splits)} sub-documents.")
 
         #storing the vectors
@@ -99,16 +109,31 @@ class rag:
     
     def retrieve_context(self, state: State) -> State:
         """Retrieve information to help answer query"""
-        retrieved_docs = self.vector_store.similarity_search(state["question"], k=2)
+        filter_dict = {}
+        if state.get("user_id"):
+            filter_dict["user_id"] = state["user_id"]
+        if state.get("collection_id"):
+            filter_dict["collection_id"] = state["collection_id"]
+        retrieved_docs = self.vector_store.similarity_search(state["question"], k=4, filter=filter_dict if filter_dict else None)
         serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}") for doc in retrieved_docs
         )
         state["context"] = retrieved_docs
-        return state;
+        return {"context": retrieved_docs}
 
 
     def generate(self, state: State):
-        docs_content = "\n\n".join(doc.page_content for doc in state["context"])
-        response = self.model.invoke(state["messages"])
-        state["messages"].append(response)
+        docs_content = "\n\n".join(doc.page_content for doc in state.get("context", []))
+        if docs_content:
+            system_prompt = (
+                "You are an assistant for research questions.\n"
+                "Answer the user's question using ONLY the following retrieved context. "
+                "If you don't know the answer or if the context doesn't contain it, state that clearly.\n\n"
+                f"--- CONTEXT ---\n{docs_content}\n---------------"
+            )
+        else:
+            system_prompt = "You are a helpful research assistant. No relevant context was found in your collections."
+
+        input_messages = [SystemMessage(content=system_prompt)] + state["messages"]
+        response = self.model.invoke(input_messages)
         return {"messages": [response]}

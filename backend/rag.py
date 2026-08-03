@@ -107,18 +107,37 @@ class rag:
 
         print(document_ids[:3])
     
-    def retrieve_context(self, state: State) -> State:
+    def retrieve_context(self, state: State) -> dict:
         """Retrieve information to help answer query"""
+        query_text = state.get("question")
+        if not query_text and state.get("messages"):
+            for msg in reversed(state["messages"]):
+                if isinstance(msg, HumanMessage) or getattr(msg, "type", None) == "human":
+                    query_text = msg.content
+                    break
+        if not query_text:
+            print("No query text found for retrieval.")
+            return {"context": []}
+
+        # Build metadata filter dictionary
         filter_dict = {}
         if state.get("user_id"):
-            filter_dict["user_id"] = state["user_id"]
+            filter_dict["user_id"] = str(state["user_id"])
         if state.get("collection_id"):
-            filter_dict["collection_id"] = state["collection_id"]
-        retrieved_docs = self.vector_store.similarity_search(state["question"], k=4, filter=filter_dict if filter_dict else {})
-        serialized = "\n\n".join(
-        (f"Source: {doc.metadata}\nContent: {doc.page_content}") for doc in retrieved_docs
-        )
-        state["context"] = retrieved_docs
+            filter_dict["collection_id"] = str(state["collection_id"])
+
+        try:
+            # Perform similarity search
+            retrieved_docs = self.vector_store.similarity_search(
+                query=query_text,
+                k=4,
+                filter=filter_dict if filter_dict else None
+            )
+            print(f"Retrieved {len(retrieved_docs)} docs for query: '{query_text}'")
+        except Exception as e:
+            print(f"Error during vector similarity search: {e}")
+            retrieved_docs = []
+
         return {"context": retrieved_docs}
 
 

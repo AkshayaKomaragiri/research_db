@@ -58,7 +58,7 @@ async def upload_file(
         response = supabase.storage.from_("user-documents").upload(
             path=supabase_path,
             file=file_bytes,
-            file_options={"cache-control": "3600", "upsert": "false"},
+            file_options={"cache-control": "3600", "upsert": "true", "content-type": file.content_type or "application/pdf"},
         )
 
         if collection_id:
@@ -70,11 +70,12 @@ async def upload_file(
                 paper_path=supabase_path,
             )
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        tmp_path = tmp.name
         try:
-            await rag.process_pdf(tmp_path)
+            tmp.write(file_bytes)
+            tmp.close()
+            await rag.process_pdf(url=tmp_path, user_id=user_id, collection_id=collection_id, paper_path=supabase_path)
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)

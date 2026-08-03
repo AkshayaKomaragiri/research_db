@@ -65,18 +65,28 @@ export default function UploadPage() {
     const filePath = `${user.id}/${file.name}`;
 
     try {
-      // 1. Upload raw PDF file to Supabase Storage bucket ('user-documents')
-      const { error: storageError } = await supabase.storage
-        .from("user-documents")
-        .upload(filePath, file, { upsert: true });
+      // 1. Send file + metadata to FastAPI endpoint
+      const formData = new FormData();
+      formData.append("file", file); // matches File(...) parameter in FastAPI
+      formData.append("user_id", user.id); // matches user_id: str = Form(...)
 
-      if (storageError) {
-        throw new Error(`Storage upload failed: ${storageError.message}`);
+      if (selectedCollectionId) {
+        formData.append("collection_id", selectedCollectionId); // matches collection_id: Optional[str] = Form(...)
       }
 
-      setUploadProgress(50);
+      const backendResponse = await fetch("http://127.0.0.1:8000/upload", {
+        method: "POST",
+        body: formData, // Do NOT set 'Content-Type' header; browser sets multipart/form-data boundary automatically
+      });
 
-      // 2. If a collection is selected, link paper to collection_papers table
+      if (!backendResponse.ok) {
+        const errorText = await backendResponse.text();
+        throw new Error(`Upload failed (${backendResponse.status}): ${errorText}`);
+      }
+
+      setUploadProgress(60);
+
+      // 2. If a collection is selected, link paper in Supabase database
       if (selectedCollectionId) {
         const { error: relationError } = await supabase
           .from("collection_papers")
@@ -95,32 +105,15 @@ export default function UploadPage() {
         }
       }
 
-      setUploadProgress(70);
-
-      // 3. Send file + metadata to backend vector endpoint
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("user_id", user.id);
-      formData.append("paper_path", filePath);
-      if (selectedCollectionId) {
-        formData.append("collection_id", selectedCollectionId);
-      }
-
-      const backendResponse = await fetch("http://127.0.0.1:8000/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!backendResponse.ok) {
-        const errorText = await backendResponse.text();
-        throw new Error(`Vector ingestion failed: ${errorText}`);
-      }
-
-      setStatus("success");
       setUploadProgress(100);
+      setStatus("success");
       setMessage("File uploaded successfully. Redirecting to My Papers...");
       setFile(null);
-      router.push("/papers");
+
+      setTimeout(() => {
+        router.push("/papers");
+      }, 1500);
+
     } catch (err) {
       console.error("Upload error:", err);
       setStatus("error");

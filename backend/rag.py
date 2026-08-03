@@ -114,7 +114,7 @@ class rag:
             filter_dict["user_id"] = state["user_id"]
         if state.get("collection_id"):
             filter_dict["collection_id"] = state["collection_id"]
-        retrieved_docs = self.vector_store.similarity_search(state["question"], k=4, filter=filter_dict if filter_dict else None)
+        retrieved_docs = self.vector_store.similarity_search(state["question"], k=4, filter=filter_dict if filter_dict else {})
         serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}") for doc in retrieved_docs
         )

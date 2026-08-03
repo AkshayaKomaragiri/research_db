@@ -12,6 +12,7 @@ type CollectionPaper = {
   paper_name: string;
   paper_path: string;
   created_at: string | null;
+  signedUrl?: string; // Add temporary signed URL
 };
 
 type CollectionDetails = {
@@ -40,6 +41,7 @@ export default function CollectionDetailPage() {
       setLoading(true);
       setError(null);
 
+      // 1. Fetch collection details
       const { data: collectionData, error: collectionError } = await supabase
         .from("collections")
         .select("id, title")
@@ -47,22 +49,15 @@ export default function CollectionDetailPage() {
         .eq("user_id", user.id)
         .maybeSingle();
 
-      if (collectionError) {
-        setError(collectionError.message);
+      if (collectionError || !collectionData) {
+        setError(collectionError?.message || "Collection not found.");
         setCollection(null);
         setPapers([]);
         setLoading(false);
         return;
       }
 
-      if (!collectionData) {
-        setError("Collection not found.");
-        setCollection(null);
-        setPapers([]);
-        setLoading(false);
-        return;
-      }
-
+      // 2. Fetch paper metadata from DB
       const { data: papersData, error: papersError } = await supabase
         .from("collection_papers")
         .select("id, paper_name, paper_path, created_at")
@@ -73,11 +68,34 @@ export default function CollectionDetailPage() {
       if (papersError) {
         setError(papersError.message);
         setPapers([]);
-      } else {
-        setPapers(papersData ?? []);
+        setLoading(false);
+        return;
       }
 
+      const rawPapers = papersData ?? [];
+
+      // 3. Generate secure signed URLs for each paper (valid for 1 hour / 3600 seconds)
+      const papersWithSignedUrls = await Promise.all(
+        rawPapers.map(async (paper) => {
+          const storagePath = paper.paper_path.replace(/^\//, "");
+
+          const { data, error: signedUrlError } = await supabase.storage
+            .from("user-documents")
+            .createSignedUrl(storagePath, 3600); // 1 hour expiration
+
+          if (signedUrlError) {
+            console.error("Error creating signed URL for:", paper.paper_path, signedUrlError);
+          }
+
+          return {
+            ...paper,
+            signedUrl: data?.signedUrl || undefined,
+          };
+        })
+      );
+
       setCollection(collectionData);
+      setPapers(papersWithSignedUrls);
       setLoading(false);
     };
 
@@ -128,32 +146,35 @@ export default function CollectionDetailPage() {
           </div>
         ) : (
           <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-            {filteredPapers.map((paper) => {
-              const storagePath = paper.paper_path.replace(/^\//, "");
-              const previewUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/user-documents/${storagePath}`;
-
-              return (
-                <div key={paper.id} className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-                  <div className="mb-4 flex items-start gap-3">
-                    <FileText className="mt-1 text-primary" />
-                    <div className="min-w-0">
-                      <h2 className="truncate text-lg font-semibold">{paper.paper_name}</h2>
-                      <p className="mt-1 text-sm text-muted">
-                        {paper.created_at ? new Date(paper.created_at).toLocaleString() : "Added recently"}
-                      </p>
-                    </div>
+            {filteredPapers.map((paper) => (
+              <div key={paper.id} className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+                <div className="mb-4 flex items-start gap-3">
+                  <FileText className="mt-1 text-primary" />
+                  <div className="min-w-0">
+                    <h2 className="truncate text-lg font-semibold">{paper.paper_name}</h2>
+                    <p className="mt-1 text-sm text-muted">
+                      {paper.created_at ? new Date(paper.created_at).toLocaleString() : "Added recently"}
+                    </p>
                   </div>
+                </div>
 
-                  <div className="overflow-hidden rounded-xl border border-border bg-background">
+                <div className="overflow-hidden rounded-xl border border-border bg-background">
+                  {paper.signedUrl ? (
                     <iframe
-                      src={previewUrl}
+                      src={paper.signedUrl}
                       title={paper.paper_name}
                       className="h-72 w-full"
                     />
-                  </div>
+                  ) : (
+                    <div className="flex h-72 items-center justify-center text-sm text-muted">
+                      Unable to load PDF preview
+                    </div>
+                  )}
+                </div>
 
+                {paper.signedUrl && (
                   <a
-                    href={previewUrl}
+                    href={paper.signedUrl}
                     target="_blank"
                     rel="noreferrer"
                     className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-primary"
@@ -161,9 +182,9 @@ export default function CollectionDetailPage() {
                     <ExternalLink size={16} />
                     Open PDF
                   </a>
-                </div>
-              );
-            })}
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>

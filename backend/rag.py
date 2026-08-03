@@ -139,7 +139,9 @@ class rag:
             retrieved_docs = []
 
         return {"context": retrieved_docs}
-
+    # search_web tool
+    #search_arxiv tool
+    # search_semantic_scholar tool
 
     def generate(self, state: State):
         docs_content = "\n\n".join(doc.page_content for doc in state.get("context", []))

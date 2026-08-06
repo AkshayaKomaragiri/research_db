@@ -1,26 +1,60 @@
+import asyncio
 import os
+from typing import Annotated, List, Optional, TypedDict
+
+import arxiv
 from dotenv import load_dotenv
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-import bs4
-from .load import load_pdf
-from langchain.tools import tool
-from langchain.agents import create_agent
-from langchain_core.tools import InjectedToolArg
-from typing import Annotated, TypedDict, List, Optional
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_core.documents import Document 
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages 
-from supabase import create_client,Client
+from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.vectorstores import SupabaseVectorStore
-from langchain_core.messages import SystemMessage
+from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint, HuggingFaceEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from supabase import Client, create_client
+from .load import load_pdf
 
 #from IPython.display import Image, display
 
 load_dotenv()
+ddg_tool = DuckDuckGoSearchResults()
+client = arxiv.Client()
+
+@tool("web_search")
+async def web_search( query: str) -> str:
+    """search the web for information
+        Args: 
+        query: search terms to look for in the web
+    """
+    print(f"\nweb_search called with query: '{query}'")
+    result = await ddg_tool.ainvoke(query)
+    print(f"web_search returned {len(result)} characters.")
+    return result
+
+
+
+@tool("arxiv_search")
+async def arxiv_search( query:str) -> str:
+    """search through research papers on arxiv"""
+    print(f"\narxiv_search called with query: '{query}'")
+    def fetch_papers():
+            
+        search = arxiv.Search(
+            query=query,
+            max_results=10
+            )
+        paper_strings = []
+        for result in client.results(search):
+            paper_strings.append(f"Title: {result.title}\nSummary: {result.summary}\n")
+        if not paper_strings:
+            return "no results"
+        return "\n----------\n".join(paper_strings)
+    
+    result = await asyncio.to_thread(fetch_papers)
+    print(f"arxiv_search returned {len(result)} characters.")
+    return result
 class State(TypedDict):
     question: str
     messages: Annotated[List[BaseMessage], add_messages]
@@ -47,6 +81,10 @@ class rag:
             model_name="sentence-transformers/all-mpnet-base-v2",
             encode_kwargs={"normalize_embeddings": True},
         ) 
+        self.tools = [web_search, arxiv_search]
+        self.tools_by_name = {t.name: t for t in self.tools}
+        self.model_with_tools = self.model.bind_tools(self.tools)
+        self.graph = self.pipline()
         #vector database
         #the database is persistent
         supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -59,26 +97,51 @@ class rag:
             table_name="documents",
             query_name="match_documents",  
         ) 
-        self.graph = self.pipline()
+
+        
         
     def pipline(self):
         
         workflow = StateGraph(State)
         workflow.add_node("retrieve", self.retrieve_context)
         workflow.add_node("generate", self.generate)
+        workflow.add_node("execute_tools", self.execute_tools)
      
 
         workflow.add_edge(START, "retrieve")
         workflow.add_edge("retrieve", "generate")
-        workflow.add_edge("generate", END)
+        workflow.add_conditional_edges(
+            "generate",
+            self.should_continue,
+            {"execute_tools": "execute_tools", END: END}
+        )
+        workflow.add_edge("execute_tools", "generate")
 
         app = workflow.compile()
         #display(Image(app.get_graph().draw_mermaid_png()))
         return app
 
+    def should_continue(self, state: State) -> str:
+        """Decide whether to execute tools or finish standard generation."""
+        last_message = state["messages"][-1]
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            return "execute_tools"
+        return END
+    async def execute_tools(self, state: State) -> dict:
+            """Execute tools requested by the model."""
+            last_message = state["messages"][-1]
+            tool_outputs = []
 
+            for tool_call in last_message.tool_calls:
+                selected_tool = self.tools_by_name[tool_call["name"]]
+                # Execute tool asynchronously
+                output = await selected_tool.ainvoke(tool_call["args"])
+                
+                tool_outputs.append(
+                    ToolMessage(content=str(output), tool_call_id=tool_call["id"])
+                )
 
-
+            return {"messages": tool_outputs}
     async def process_pdf(self, url : str, user_id: str, collection_id: Optional[str] = None, paper_path: Optional[str] = None):
         docs = load_pdf(url)
         print(len(docs))
@@ -149,12 +212,15 @@ class rag:
             system_prompt = (
                 "You are an assistant for research questions.\n"
                 "Answer the user's question using ONLY the following retrieved context. "
-                "If you don't know the answer or if the context doesn't contain it, state that clearly.\n\n"
+                "If you don't know the answer or if the context doesn't contain it, use the axriv search tool depending on the question.\n\n"
+                
+                "only return an answer that is relevant to the provided prompt" 
                 f"--- CONTEXT ---\n{docs_content}\n---------------"
             )
         else:
             system_prompt = "You are a helpful research assistant. No relevant context was found in your collections."
 
         input_messages = [SystemMessage(content=system_prompt)] + state["messages"]
-        response = self.model.invoke(input_messages)
+        
+        response = self.model_with_tools.invoke(input_messages)
         return {"messages": [response]}

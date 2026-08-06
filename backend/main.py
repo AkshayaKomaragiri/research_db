@@ -84,6 +84,11 @@ async def upload_file(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+@app.get("/search")
+async def search():
+    result = await rag.search.ainvoke({"query" :"electron"})
+    print(result)
+    return {"result": result}
 
 @app.post("/chat")
 async def answer_question(request: Request):
